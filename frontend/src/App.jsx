@@ -4,8 +4,10 @@ import axios from "axios";
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from "react-router-dom";
 import './App.css';
 
+
 const TaskManagementApp = () => {
   const [tasks, setTasks] = useState([]);
+  const [users, setUsers] = useState([]); // Fetch list of users (for task assignment)
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -15,6 +17,7 @@ const TaskManagementApp = () => {
   const [isEdit, setIsEdit] = useState(false);
   const [currentId, setCurrentId] = useState(null);
   const [userRole, setUserRole] = useState(null); // Initialize as null to check loading state
+  const [assignedUserId, setAssignedUserId] = useState(""); // For admin task assignment
   const [isAdmin, setIsAdmin] = useState(false);
 
   const navigate = useNavigate(); // Hook for navigating programmatically
@@ -31,6 +34,7 @@ const TaskManagementApp = () => {
     }
 
     fetchTasks(); // Fetch tasks after determining user role
+    if (role === 'admin') fetchUsers(); // Only fetch users if the role is admin
   }, []);
 
   // Helper function to format date to yyyy-MM-dd
@@ -48,6 +52,16 @@ const TaskManagementApp = () => {
     }
   };
 
+  // Fetch users (for task assignment by admin)
+  const fetchUsers = async () => {
+    try {
+      const response = await axios.get("http://localhost:5000/users"); // Adjust endpoint based on your backend
+      setUsers(response.data);
+    } catch (error) {
+      console.error("Error fetching users:", error);
+    }
+  };
+
   // Handle form submission (create or update task)
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -57,6 +71,7 @@ const TaskManagementApp = () => {
         description: formData.description,
         priority: formData.priority,
         due_date: formData.due_date,
+        user_id: isAdmin ? assignedUserId : null, // Only send user_id if the admin is assigning the task
       };
 
       if (isEdit) {
@@ -72,7 +87,7 @@ const TaskManagementApp = () => {
     }
   };
 
-  // Handle task delete
+  // Handle task delete (admins only)
   const handleDelete = async (id) => {
     console.log("Deleting task with ID:", id);
     if (window.confirm("Are you sure you want to delete this task?")) {
@@ -95,6 +110,7 @@ const TaskManagementApp = () => {
     });
     setIsEdit(true);
     setCurrentId(task.id);
+    setAssignedUserId(task.user_id || ""); // Set the user who is assigned the task (for admins)
   };
 
   // Reset form to initial state
@@ -105,6 +121,7 @@ const TaskManagementApp = () => {
       priority: "medium",
       due_date: "",
     });
+    setAssignedUserId(""); // Reset assigned user
   };
 
   // Handle logout function
@@ -160,12 +177,10 @@ const TaskManagementApp = () => {
                   {isAdmin && (
                     <td>
                       <div className="action-buttons">
-                        <>
-                          <button onClick={() => handleEdit(task)}>Edit</button>
-                          <button className="delete-btn" onClick={() => handleDelete(task.id)}>
-                            🗑
-                          </button>
-                        </>
+                        <button onClick={() => handleEdit(task)}>Edit</button>
+                        <button className="delete-btn" onClick={() => handleDelete(task.id)}>
+                          🗑
+                        </button>
                       </div>
                     </td>
                   )}
@@ -205,6 +220,20 @@ const TaskManagementApp = () => {
             value={formData.due_date ? formatDate(formData.due_date) : ""}
             onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
           />
+
+          {/* Admins can select a user for the task */}
+          <select
+            value={assignedUserId}
+            onChange={(e) => setAssignedUserId(e.target.value)}
+          >
+            <option value="">Select User</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.username}
+              </option>
+            ))}
+          </select>
+
           <button type="submit">{isEdit ? "Update Task" : "Add Task"}</button>
         </form>
       )}

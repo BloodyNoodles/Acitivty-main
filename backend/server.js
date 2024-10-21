@@ -3,10 +3,11 @@ const mysql = require("mysql2/promise");  // Use mysql2/promise for async/await
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const bcrypt = require("bcrypt");
-
+const express = require('express');
+const jwt = require('jsonwebtoken'); // Make sure to require the package
 const app = express();
 const session = require('express-session');
-
+const PORT = process.env.PORT || 5000;
 app.use(session({
     secret: 'your_secret_key', // Replace with a strong secret key
     resave: false,
@@ -103,10 +104,24 @@ app.get('/api/getUserRole', (req, res) => {
 
 
 
-// Get all tasks
-app.get("/tasks", async (req, res) => {
+// Get all tasks (admin can see all, regular users can see only their own)
+app.get("/tasks", authenticate, async (req, res) => {
+    const { id: loggedInUserId, role } = req.user;
+
     try {
-        const [tasks] = await db.execute("SELECT * FROM tasks"); // Fetch tasks
+        let query, params;
+        
+        if (role === 'admin') {
+            // Admins can view all tasks
+            query = "SELECT * FROM tasks";
+            params = [];
+        } else {
+            // Regular users can view only their own tasks
+            query = "SELECT * FROM tasks WHERE user_id = ?";
+            params = [loggedInUserId];
+        }
+
+        const [tasks] = await db.execute(query, params);
         res.json(tasks);
     } catch (err) {
         console.error("Error fetching tasks:", err);
@@ -114,13 +129,20 @@ app.get("/tasks", async (req, res) => {
     }
 });
 
-// Add a new task
-app.post("/tasks", async (req, res) => {
-    const { title, description, priority, due_date } = req.body;
+// Task creation restricted to admins only
+app.post("/tasks", authenticate, async (req, res) => {
+    const { title, description, priority, due_date, user_id } = req.body;
+    const { id: loggedInUserId, role } = req.user;
+
+    // Only admins are allowed to create tasks
+    if (role !== 'admin') {
+        return res.status(403).json({ message: 'Only admins can create tasks' });
+    }
+
     try {
         const [result] = await db.execute(
-            "INSERT INTO tasks (title, description, priority, due_date) VALUES (?, ?, ?, ?)",
-            [title, description, priority, due_date]
+            "INSERT INTO tasks (title, description, priority, due_date, user_id) VALUES (?, ?, ?, ?, ?)",
+            [title, description, priority, due_date, user_id]
         );
         res.json({ id: result.insertId, ...req.body });
     } catch (err) {
@@ -129,26 +151,51 @@ app.post("/tasks", async (req, res) => {
     }
 });
 
-// Update a task
-app.put("/tasks/:id", async (req, res) => {
-    const { id } = req.params;
+// Update tasks (regular users can only update their own tasks)
+app.put("/tasks/:id", authenticate, async (req, res) => {
     const { title, description, priority, due_date } = req.body;
+    const { id: loggedInUserId, role } = req.user;
+    const { id } = req.params;
+
     try {
-        const [result] = await db.execute(
+        // Check if the task belongs to the logged-in user if not an admin
+        let query = "SELECT * FROM tasks WHERE id = ?";
+        const [tasks] = await db.execute(query, [id]);
+
+        if (tasks.length === 0) {
+            return res.status(404).json({ message: "Task not found" });
+        }
+
+        const task = tasks[0];
+
+        if (role !== 'admin' && task.user_id !== loggedInUserId) {
+            return res.status(403).json({ message: "You can only update your own tasks" });
+        }
+
+        // Allow the update if the user is admin or the task belongs to the logged-in user
+        await db.execute(
             "UPDATE tasks SET title = ?, description = ?, priority = ?, due_date = ? WHERE id = ?",
             [title, description, priority, due_date, id]
         );
-        res.json(result);
+
+        res.json({ message: "Task updated successfully" });
     } catch (err) {
         console.error("Error updating task:", err);
         res.status(500).send("Server error");
     }
 });
 
-// Delete a task
-app.delete("/tasks/:id", async (req, res) => {
-    const { id } = req.params;
+// Task deletion restricted to admins only
+app.delete("/tasks/:id", authenticate, async (req, res) => {
+    const { role } = req.user;
+
+    // Only admins are allowed to delete tasks
+    if (role !== 'admin') {
+        return res.status(403).json({ message: 'Only admins can delete tasks' });
+    }
+
     try {
+        const { id } = req.params;
         const [result] = await db.execute("DELETE FROM tasks WHERE id = ?", [id]);
         res.json(result);
     } catch (err) {
